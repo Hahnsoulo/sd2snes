@@ -2,6 +2,8 @@
 #include "memmap.i65"
 #include "stack.i65"
 .byt "===HIPRINT==="
+; print a string in mode 5 using pseudo-8x8 tiles on two BG layers.
+; characters 0 and 1 are considered "end of string".
 ; input:
 ; print_count
 ; print_x
@@ -58,20 +60,24 @@ hiprint:
   bcs hiprint_bg1
 hiprint_bg2
   lda [print_ptr]
-  and #$00ff
+  ror
+  and #$007f
   beq hiprint_end
-  inc print_ptr
+  rol
   asl
+  inc print_ptr
   ora print_temp
   sta !BG2_TILE_BUF, x
   dey
   beq hiprint_end
 hiprint_bg1
   lda [print_ptr]
-  and #$00ff
+  ror
+  and #$007f
   beq hiprint_end
-  inc print_ptr
+  rol
   asl
+  inc print_ptr
   ora print_temp
   sta !BG1_TILE_BUF, x
   inx
@@ -82,6 +88,7 @@ hiprint_bg1
 hiprint_end
   sep #$20 : .as
   lda [print_ptr]
+  and #$fe ; mask "soft" end of string
   sta print_over
   tya
   sec
@@ -136,42 +143,6 @@ loprint_end
   plb
   rts
 
-backup_screen:
-; MVN: X=source, Y=dest, A=count
-;      imm1=srcbk, imm2=dstbk
-  phb
-  php
-  rep #$30 : .xl : .al
-  ldx #!BG1_TILE_BUF+64*9
-  ldy #!BG1_TILE_BAK+64*9
-  lda @textdmasize
-  mvn ^BG1_TILE_BUF, ^BG1_TILE_BAK
-  ldx #!BG2_TILE_BUF+64*9
-  ldy #!BG2_TILE_BAK+64*9
-  lda @textdmasize
-  mvn ^BG2_TILE_BUF, ^BG2_TILE_BAK
-  plp
-  plb
-  rts
-
-restore_screen:
-; MVN: X=source, Y=dest, A=count
-;      imm1=srcbk, imm2=dstbk
-  phb
-  php
-  rep #$30 : .xl : .al
-  ldx #!BG1_TILE_BAK+64*9
-  ldy #!BG1_TILE_BUF+64*9
-  lda @textdmasize
-  mvn ^BG1_TILE_BAK, ^BG1_TILE_BUF
-  ldx #!BG2_TILE_BAK+64*9
-  ldy #!BG2_TILE_BUF+64*9
-  lda @textdmasize
-  mvn ^BG2_TILE_BAK, ^BG2_TILE_BUF
-  plp
-  plb
-  rts
-
 draw_window:
   phb
   php
@@ -198,8 +169,6 @@ draw_window:
   sta !stringbuf,y
   dey
   bne -
-
-
 ; print to text buffer
   lda #$03
   sta print_pal
@@ -330,25 +299,17 @@ draw_loading_window:
   rep #$10 : .xl
   lda @loading_win_x
   sta window_x
-  lda @loading_win_y
+  sta print_x
+  lda listdisp
+  clc
+  adc #$0a
   sta window_y
+  sta print_y
   lda @loading_win_w
   sta window_w
   lda @loading_win_h
   sta window_h
   jsr push_window
-  lda #^zero
-  sta window_tbank
-  ldx #!zero
-  stx window_taddr
-  jsr draw_window
-  lda @loading_win_x
-  inc
-  inc
-  sta print_x
-  lda @loading_win_y
-  inc
-  sta print_y
   lda #^text_loading
   sta print_bank
   ldx #!text_loading
@@ -713,5 +674,25 @@ right_align:
     adc @window_w
     dec                   ; = ~(strlen-window_x)+window_w-1
     sta @print_x
+  plp
+  rts
+
+; bar_color: change select bar color
+; params:
+; a: bar "palette" number
+set_bar_color:
+  php
+    sep #$30 : .as : .xs
+    asl
+    asl
+    tax
+    lda @hdma_bar_color_src, x
+    sta @hdma_math+2
+    lda @hdma_bar_color_src+1, x
+    sta @hdma_math+5
+    lda @hdma_bar_color_src+2, x
+    sta @hdma_math+8
+    lda @hdma_bar_color_src+3, x
+    sta @hdma_math+11
   plp
   rts

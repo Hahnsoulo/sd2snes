@@ -15,7 +15,7 @@ cfg_t CFG_DEFAULT = {
   .vidmode_game = VIDMODE_AUTO,
   .pair_mode_allowed = 0,
   .bsx_use_usertime = 0,
-  .bsx_time = {0x9, 0x9, 0x7, 0x3, 0x0, 0x1, 0x1, 0x8, 0x0, 0x5, 0x3, 0x0},
+  .bsx_time = {0x0, 0x3, 0x5, 0x0, 0x8, 0x1, 0x1, 0x0, 0x3, 0x7, 0x9, 0x9},
   .r213f_override = 1,
   .enable_irq_hook = 1,
   .enable_irq_buttons = 1,
@@ -26,7 +26,8 @@ cfg_t CFG_DEFAULT = {
   .hide_extensions = 0,
   .cx4_speed = 0,
   .skin_name = "sd2snes.skin",
-  .control_type = 0
+  .control_type = 0,
+  .msu_volume_boost = 0
 };
 
 cfg_t CFG;
@@ -65,12 +66,14 @@ int cfg_save() {
 //  f_printf(&file_handle, "%s: %d\n", CFG_SCREENSAVER_TIMEOUT, CFG.screensaver_timeout);
   f_puts("\n# UI related settings\n", &file_handle);
   f_printf(&file_handle, "#  %s: Sort directories (slower but files are guaranteed to be in order)\n", CFG_SORT_DIRECTORIES);
-//  f_printf(&file_handle, "#  %s: Hide file extensions (NOT IMPLEMENTED)\n", CFG_HIDE_EXTENSIONS);
+  f_printf(&file_handle, "#  %s: Hide file extensions\n", CFG_HIDE_EXTENSIONS);
   f_printf(&file_handle, "%s: %s\n", CFG_SORT_DIRECTORIES, CFG.sort_directories ? "true" : "false");
-//  f_printf(&file_handle, "%s: %s\n", CFG_HIDE_EXTENSIONS, CFG.hide_extensions ? "true" : "false");
+  f_printf(&file_handle, "%s: %s\n", CFG_HIDE_EXTENSIONS, CFG.hide_extensions ? "true" : "false");
   f_puts("\n# Enhancement chip settings\n", &file_handle);
   f_printf(&file_handle, "#  %s: Cx4 core speed (0: original, 1: fast, all instructions are single cycle)\n", CFG_CX4_SPEED);
   f_printf(&file_handle, "%s: %d\n", CFG_CX4_SPEED, CFG.cx4_speed);
+  f_printf(&file_handle, "#  %s: MSU audio volume boost\n#    (0: none; 1: +3.5dBFS; 2: +6dBFS; 3: +9.5dBFS; 4: +12dBFS)\n", CFG_MSU_VOLUME_BOOST);
+  f_printf(&file_handle, "%s: %d\n", CFG_MSU_VOLUME_BOOST, CFG.msu_volume_boost);
   file_close();
   return err;
 }
@@ -120,11 +123,53 @@ int cfg_load() {
     if(yaml_get_itemvalue(CFG_SORT_DIRECTORIES, &tok)) {
       CFG.sort_directories = tok.boolvalue ? 1 : 0;
     }
+    if(yaml_get_itemvalue(CFG_HIDE_EXTENSIONS, &tok)) {
+      CFG.hide_extensions = tok.boolvalue ? 1 : 0;
+    }
     if(yaml_get_itemvalue(CFG_CX4_SPEED, &tok)) {
       CFG.cx4_speed = tok.longvalue;
     }
+    if(yaml_get_itemvalue(CFG_MSU_VOLUME_BOOST, &tok)) {
+      CFG.msu_volume_boost = tok.longvalue;
+    }
   }
   yaml_file_close();
+  return err;
+}
+
+int cfg_validity_check_recent_games() {
+  int err = 0, index, index_max, write_indices[10], rewrite_lastfile = 0;
+  TCHAR fntmp[10][256];
+  file_open(LAST_FILE, FA_READ);
+  if(file_status == FILE_ERR) {
+    return 0;
+  }
+  for(index = 0; index < 10 && !f_eof(&file_handle); index++) {
+    f_gets(fntmp[index], 255, &file_handle);
+  }
+  if(!f_eof(&file_handle))
+    index_max = 10;
+  else
+    index_max = index;
+  file_close();
+  for(index = 0; index < index_max; index++) {
+    file_open((uint8_t*)fntmp[index], FA_READ);
+    write_indices[index] = file_status;
+    if(file_status != FILE_OK)
+      rewrite_lastfile = 1;
+    file_close();
+  }
+  if(rewrite_lastfile) {
+    f_rename ((TCHAR*)LAST_FILE, (TCHAR*)LAST_FILE_BAK);
+    file_open(LAST_FILE, FA_CREATE_ALWAYS | FA_WRITE);
+    for(index = 0; index < index_max; index++) {
+      if(write_indices[index] == FILE_OK) {
+        err = f_puts(fntmp[index], &file_handle);
+        err = f_putc(0, &file_handle);
+      }
+    }
+    file_close();
+  }
   return err;
 }
 
@@ -185,7 +230,7 @@ void cfg_dump_recent_games_for_snes(uint32_t address) {
   file_open(LAST_FILE, FA_READ);
   for(index = 0; index < 10 && !f_eof(&file_handle); index++) {
     f_gets(fntmp, 255, &file_handle);
-    sram_writeblock(strrchr((const char*)fntmp, '/')+1, address+256*index, 256);
+    sram_writestrn(strrchr((const char*)fntmp, '/')+1, address+256*index, 256);
   }
   ST.num_recent_games = index;
   file_close();
@@ -194,6 +239,11 @@ void cfg_dump_recent_games_for_snes(uint32_t address) {
 /* make binary config available to menu */
 void cfg_load_to_menu() {
   sram_writeblock(&CFG, SRAM_MENU_CFG_ADDR, sizeof(cfg_t));
+}
+
+/* dump binary config from menu */
+void cfg_get_from_menu() {
+  sram_readblock(&CFG, SRAM_MENU_CFG_ADDR, sizeof(cfg_t));
 }
 
 void cfg_set_pair_mode_allowed(uint8_t allowed) {

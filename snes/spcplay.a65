@@ -59,7 +59,7 @@ spcplayer:
   stz print_pal
   lda #29
   sta print_count
-  lda #17
+  lda #16
   sta print_y
   lda #17
   sta print_x
@@ -203,11 +203,11 @@ spc_playloop:
 spc_key_b:
   rep #$20 : .al
   tsc
-  sta SAVED_SP        ; Save SP for later re-entry
-  lda #$fa50          ; Write reset signature
-  sta WARM_SIGNATURE
+  sta @SAVED_SP        ; Save SP for later re-entry
+  lda #$fa50           ; Write reset signature
+  sta @WARM_SIGNATURE
   eor #$ffff
-  sta WARM_COMPLEMENT
+  sta @WARM_COMPLEMENT
   sep #$20 : .as
 
 ; Blank screen & issue CMD_RESET command to Microcontroller...
@@ -239,7 +239,6 @@ spc700_load:
   jsr upload_high_ram ; Upload 63.5K of SPC700 ram
   jsr upload_low_ram  ; Upload rest of ram
   jsr restore_final   ; Restore SPC700 state & start execution
-
   lda #$81            ; VBlank NMI + Auto Joypad Read
   sta $4200           ; enable V-BLANK NMI
   cli
@@ -258,7 +257,7 @@ upload_dsp_regs:
 
   ldx #$0000
 -
-  lda @loader,x
+  lda @spc_loader,x
   jsr spc_upload_byte
   inx
   cpy #31             ; size of loader
@@ -338,10 +337,10 @@ upload_high_ram:
 
   ldx #$0000
 -
-  lda @transfer,x
+  lda @spc_transfer,x
   jsr spc_upload_byte
   inx
-  cpy #43             ; size of transfer routine
+  cpy #44             ; size of transfer routine
   bne -
 
   ldx #$023f          ; prepare transfer address
@@ -660,10 +659,10 @@ exec_instr:
 ; isn't needed, as this avoids such tight timing
 ; requirements.
 
-;  phd                 ; 4
-;  pld                 ; 5
-;  phd                 ; 4
-;  pld                 ; 5
+  phd                 ; 4
+  pld                 ; 5
+  phd                 ; 4
+  pld                 ; 5
 
 ; Patch loop to skip first two bytes
   lda #$fe            ; 16

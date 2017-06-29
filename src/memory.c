@@ -173,7 +173,7 @@ void sram_readblock(void* buf, uint32_t addr, uint16_t size) {
 
 uint16_t sram_readstrn(void* buf, uint32_t addr, uint16_t size) {
   uint16_t elemcount = 0;
-  uint16_t count=size;
+  uint16_t count = size;
   uint8_t* tgt = buf;
   set_mcu_addr(addr);
   FPGA_SELECT();
@@ -183,12 +183,36 @@ uint16_t sram_readstrn(void* buf, uint32_t addr, uint16_t size) {
     if(!(*(tgt++) = FPGA_RX_BYTE())) break;
     elemcount++;
   }
+  tgt--;
+  if(*tgt) *tgt = 0;
+  FPGA_DESELECT();
+  return elemcount;
+}
+
+uint16_t sram_writestrn(void* buf, uint32_t addr, uint16_t size) {
+  uint16_t elemcount = 0;
+  uint16_t count = size;
+  uint8_t *src = buf;
+  set_mcu_addr(addr);
+  FPGA_SELECT();
+  FPGA_TX_BYTE(0x98);   /* WRITE */
+  if(*src) {
+    while(count > 1) {
+      FPGA_TX_BYTE(*src++);
+      FPGA_WAIT_RDY();
+      elemcount++;
+      count--;
+      if(!(*src)) break;
+    }
+  }
+  FPGA_TX_BYTE(0);
+  FPGA_WAIT_RDY();
   FPGA_DESELECT();
   return elemcount;
 }
 
 void sram_writeblock(void* buf, uint32_t addr, uint16_t size) {
-  uint16_t count=size;
+  uint16_t count = size;
   uint8_t* src = buf;
   set_mcu_addr(addr);
   FPGA_SELECT();
@@ -217,6 +241,9 @@ uint32_t load_rom(uint8_t* filename, uint32_t base_addr, uint8_t flags) {
   smc_id(&romprops);
   file_close();
 
+  if(filename == (uint8_t*)"/sd2snes/menu.bin") {
+    fpga_set_features(romprops.fpga_features | FEAT_CMD_UNLOCK);
+  }
   /* TODO check prerequisites and set error code here */
   if(flags & LOADROM_WAIT_SNES) snes_set_snes_cmd(0x55);
   /* reconfigure FPGA if necessary */
@@ -226,6 +253,7 @@ uint32_t load_rom(uint8_t* filename, uint32_t base_addr, uint8_t flags) {
   if(romprops.fpga_conf) {
     printf("reconfigure FPGA with %s...\n", romprops.fpga_conf);
     fpga_pgm((uint8_t*)romprops.fpga_conf);
+    fpga_set_features(romprops.fpga_features | FEAT_CMD_UNLOCK);
   }
   if(flags & LOADROM_WAIT_SNES) snes_set_snes_cmd(0x77);
   set_mcu_addr(base_addr + romprops.load_address);
@@ -243,18 +271,17 @@ uint32_t load_rom(uint8_t* filename, uint32_t base_addr, uint8_t flags) {
     }
   }
   file_close();
-  set_mapper(romprops.mapper_id);
   printf("rom header map: %02x; mapper id: %d\n", romprops.header.map, romprops.mapper_id);
   ticks_total=getticks()-ticksstart;
   printf("%u ticks total\n", ticks_total);
   if(romprops.mapper_id==3) {
     printf("BSX Flash cart image\n");
     printf("attempting to load BSX BIOS /sd2snes/bsxbios.bin...\n");
-    load_sram_offload((uint8_t*)"/sd2snes/bsxbios.bin", 0x800000);
+    load_sram_offload((uint8_t*)"/sd2snes/bsxbios.bin", 0x800000, LOADRAM_AUTOSKIP_HEADER);
     printf("attempting to load BS data file /sd2snes/bsxpage.bin...\n");
-    load_sram_offload((uint8_t*)"/sd2snes/bsxpage.bin", 0x900000);
+    load_sram_offload((uint8_t*)"/sd2snes/bsxpage.bin", 0x900000, 0);
     printf("Type: %02x\n", romprops.header.destcode);
-//  set_bsx_regs(0xc0, 0x3f);
+    set_bsx_regs(0xf6, 0x09);
     uint16_t rombase;
     if(romprops.header.ramsize & 1) {
       rombase = romprops.load_address + 0xff00;
@@ -300,12 +327,11 @@ uint32_t load_rom(uint8_t* filename, uint32_t base_addr, uint8_t flags) {
   set_saveram_mask(rammask);
   set_rom_mask(rommask);
   readled(0);
+
   if(flags & LOADROM_WITH_SRAM) {
     if(romprops.ramsize_bytes) {
-      sram_memset(SRAM_SAVE_ADDR, romprops.ramsize_bytes, 0);
-      strcpy(strrchr((char*)filename, (int)'.'), ".srm");
-      printf("SRM file: %s\n", filename);
-      load_sram(filename, SRAM_SAVE_ADDR);
+      sram_memset(SRAM_SAVE_ADDR, romprops.ramsize_bytes, 0xFF);
+      migrate_and_load_srm(filename, SRAM_SAVE_ADDR);
       /* file not found error is ok (SRM file might not exist yet) */
       if(file_res == FR_NO_FILE) file_res = 0;
       saveram_crc_old = calc_sram_crc(SRAM_SAVE_ADDR, romprops.ramsize_bytes);
@@ -327,9 +353,10 @@ uint32_t load_rom(uint8_t* filename, uint32_t base_addr, uint8_t flags) {
     romprops.fpga_features |= FEAT_213F; /* e.g. for general consoles */
   }
   fpga_set_213f(romprops.region);
-  fpga_set_features(romprops.fpga_features);
+//  fpga_set_features(romprops.fpga_features);
   fpga_set_dspfeat(romprops.fpga_dspfeat);
-
+  dac_pause();
+  dac_reset(0);
   if(get_cic_state() == CIC_PAIR) {
     if(filename != (uint8_t*)"/sd2snes/menu.bin") {
       if(CFG.vidmode_game == VIDMODE_AUTO) {
@@ -342,19 +369,26 @@ uint32_t load_rom(uint8_t* filename, uint32_t base_addr, uint8_t flags) {
   }
 
   if(flags & LOADROM_WAIT_SNES) {
-    while(snes_get_mcu_cmd() != SNES_CMD_RESET);
+    while(snes_get_mcu_cmd() != SNES_CMD_RESET) cli_entrycheck();
   }
+
+  set_mapper(romprops.mapper_id);
 
 //printf("%04lx\n", romprops.header_address + ((void*)&romprops.header.vect_irq16 - (void*)&romprops.header));
   if(flags & (LOADROM_WITH_RESET|LOADROM_WAIT_SNES)) {
     printf("resetting SNES\n");
     fpga_dspx_reset(1);
     snes_reset(1);
-    delay_ms(SNES_RESET_PULSELEN_MS);
+    if(ST.is_u16 && (ST.u16_cfg & 0x01)) {
+      delay_ms(60*SNES_RESET_PULSELEN_MS);
+    } else {
+      delay_ms(SNES_RESET_PULSELEN_MS);
+    }
     snescmd_prepare_nmihook();
     cheat_yaml_load(filename);
-    cheat_yaml_save(filename);
+// XXX    cheat_yaml_save(filename);
     cheat_program();
+    fpga_set_features(romprops.fpga_features);
     snes_reset(0);
     fpga_dspx_reset(0);
   }
@@ -439,12 +473,20 @@ uint32_t load_spc(uint8_t* filename, uint32_t spc_data_addr, uint32_t spc_header
   return (uint32_t)filesize;
 }
 
-uint32_t load_sram_offload(uint8_t* filename, uint32_t base_addr) {
+uint32_t load_sram_offload(uint8_t* filename, uint32_t base_addr, uint8_t flags) {
   set_mcu_addr(base_addr);
   UINT bytes_read;
   DWORD filesize;
   file_open(filename, FA_READ);
   filesize = file_handle.fsize;
+  if(file_res) return 0;
+  if(flags & LOADRAM_AUTOSKIP_HEADER) {
+    if((filesize & 0xffff) == 0x200) {
+      ff_sd_offload=1;
+      f_lseek(&file_handle, 0x200L);
+      printf("load_sram_offload: skipping 512b header\n");
+    }
+  }
   if(file_res) return 0;
   for(;;) {
     ff_sd_offload=1;
@@ -456,12 +498,36 @@ uint32_t load_sram_offload(uint8_t* filename, uint32_t base_addr) {
   return (uint32_t)filesize;
 }
 
+uint32_t migrate_and_load_srm(uint8_t* filename, uint32_t base_addr) {
+  uint8_t srmfile[256] = SAVE_BASEDIR;
+  append_file_basename((char*)srmfile, (char*)filename, ".srm", sizeof(srmfile));
+  printf("SRM file: %s\n", srmfile);
+
+  uint32_t filesize;
+  /* check for SRM file in new centralized sram folder */
+  filesize = load_sram(srmfile, base_addr);
+  if(file_res) {
+    /* try to move SRM file from old place to new one and to load again */
+    strcpy(strrchr((char*)filename, (int)'.'), ".srm");
+    printf("%s not found, trying to load and migrate %s...\n", srmfile, filename);
+    /* check if new sram folder exists, create it if it doesn't */
+    check_or_create_folder(SAVE_BASEDIR);
+    f_rename((TCHAR*)filename, (TCHAR*)srmfile);
+    filesize = load_sram(srmfile, base_addr);
+    if(file_res) {
+      printf("migrate_and_load_sram: could not open %s, res=%d\n", srmfile, file_res);
+      return 0;
+    }
+  }
+  return (uint32_t)filesize;
+}
+
 uint32_t load_sram(uint8_t* filename, uint32_t base_addr) {
-  set_mcu_addr(base_addr);
   UINT bytes_read;
   DWORD filesize;
-  file_open(filename, FA_READ);
-  filesize = file_handle.fsize;
+
+  set_mcu_addr(base_addr);
+  file_open((uint8_t*)filename, FA_READ);
   if(file_res) {
     printf("load_sram: could not open %s, res=%d\n", filename, file_res);
     return 0;
@@ -520,6 +586,12 @@ uint32_t load_bootrle(uint32_t base_addr) {
   return (uint32_t)filesize;
 }
 
+void save_srm(uint8_t* filename, uint32_t sram_size, uint32_t base_addr) {
+    char srmfile[256] = SAVE_BASEDIR;
+    check_or_create_folder(SAVE_BASEDIR);
+    append_file_basename(srmfile, (char*)filename, ".srm", sizeof(srmfile));
+    save_sram((uint8_t*)srmfile, sram_size, base_addr);
+}
 
 void save_sram(uint8_t* filename, uint32_t sram_size, uint32_t base_addr) {
   uint32_t count = 0;

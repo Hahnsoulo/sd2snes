@@ -23,6 +23,7 @@ module address(
   input [2:0] MAPPER,       // MCU detected mapper
   input [23:0] SNES_ADDR,   // requested address from SNES
   input [7:0] SNES_PA,      // peripheral address from SNES
+  input SNES_ROMSEL,        // ROMSEL from SNES
   output [23:0] ROM_ADDR,   // Address to request from SRAM0
   output ROM_HIT,           // enable SRAM0
   output IS_SAVERAM,        // address/CS mapped as SRAM?
@@ -40,6 +41,10 @@ module address(
   output dspx_a0,
   output r213f_enable,
   output snescmd_enable,
+  output nmicmd_enable,
+  output return_vector_enable,
+  output branch1_enable,
+  output branch2_enable,
   input [8:0] bs_page_offset,
   input [9:0] bs_page,
   input bs_page_enable
@@ -84,11 +89,11 @@ assign IS_SAVERAM = SAVERAM_MASK[0]
                          & &SNES_ADDR[14:13]
                          & !SNES_ADDR[15]
                         )
-/*  LoROM:   SRAM @ Bank 0x70-0x7d, 0xf0-0xfd
+/*  LoROM:   SRAM @ Bank 0x70-0x7d, 0xf0-0xff
  *  Offset 0000-7fff for ROM >= 32 MBit, otherwise 0000-ffff */
                       :(MAPPER == 3'b001)
                       ? (&SNES_ADDR[22:20]
-                         & (SNES_ADDR[19:16] < 4'b1110)
+                         & (~SNES_ROMSEL)
                          & (~SNES_ADDR[15] | ~ROM_MASK[21])
                         )
 /*  BS-X: SRAM @ Bank 0x10-0x17 Offset 5000-5fff */
@@ -115,7 +120,7 @@ wire BSX_IS_PSRAM = BSX_PSRAM_LOHI
                          &(~(SNES_ADDR[19] & bsx_regs[2])))
                        | (bsx_regs[2]
                           ? (SNES_ADDR[22:21] == 2'b01 & SNES_ADDR[15:13] == 3'b011)
-                          : (&SNES_ADDR[22:20] & ~SNES_ADDR[15]))
+                          : (~SNES_ROMSEL & &SNES_ADDR[22:20] & ~SNES_ADDR[15]))
                        );
 
 wire BSX_IS_CARTROM = ((bsx_regs[7] & (SNES_ADDR[23:22] == 2'b00))
@@ -131,9 +136,7 @@ wire BSX_IS_HOLE = BSX_HOLE_LOHI
 assign bsx_tristate = (MAPPER == 3'b011) & ~BSX_IS_CARTROM & ~BSX_IS_PSRAM & BSX_IS_HOLE;
 
 assign IS_WRITABLE = IS_SAVERAM
-                     |((MAPPER == 3'b011)
-                       ? BSX_IS_PSRAM
-                       : 1'b0);
+                     |((MAPPER == 3'b011) & BSX_IS_PSRAM);
 
 wire [23:0] BSX_ADDR = bsx_regs[2] ? {1'b0, SNES_ADDR[22:0]}
                                    : {2'b00, SNES_ADDR[22:16], SNES_ADDR[14:0]};
@@ -241,5 +244,8 @@ assign dspx_a0 = featurebits[FEAT_DSPX]
 assign r213f_enable = featurebits[FEAT_213F] & (SNES_PA == 8'h3f);
 
 assign snescmd_enable = ({SNES_ADDR[22], SNES_ADDR[15:9]} == 8'b0_0010101);
-
+assign nmicmd_enable = (SNES_ADDR == 24'h002BF2);
+assign return_vector_enable = (SNES_ADDR == 24'h002A5A);
+assign branch1_enable = (SNES_ADDR == 24'h002A13);
+assign branch2_enable = (SNES_ADDR == 24'h002A4D);
 endmodule

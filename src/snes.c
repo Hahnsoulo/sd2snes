@@ -25,6 +25,7 @@
 */
 
 #include <arm/NXP/LPC17xx/LPC17xx.h>
+#include <string.h>
 #include "bits.h"
 #include "config.h"
 #include "uart.h"
@@ -39,10 +40,13 @@
 #include "fpga.h"
 #include "fpga_spi.h"
 #include "rtc.h"
+#include "cfg.h"
 
 uint32_t saveram_crc, saveram_crc_old;
 extern snes_romprops_t romprops;
 extern int snes_boot_configured;
+
+extern cfg_t CFG;
 
 volatile int reset_changed;
 volatile int reset_pressed;
@@ -50,7 +54,8 @@ volatile int reset_pressed;
 status_t ST = {
   .rtc_valid = 0xff,
   .num_recent_games = 0,
-  .is_u16 = 0
+  .is_u16 = 0,
+  .u16_cfg = 0xff
 };
 
 void prepare_reset() {
@@ -58,7 +63,7 @@ void prepare_reset() {
   delay_ms(SNES_RESET_PULSELEN_MS);
   if(romprops.ramsize_bytes && fpga_test() == FPGA_TEST_TOKEN) {
     writeled(1);
-    save_sram(file_lfn, romprops.ramsize_bytes, SRAM_SAVE_ADDR);
+    save_srm(file_lfn, romprops.ramsize_bytes, SRAM_SAVE_ADDR);
     writeled(0);
   }
   rdyled(1);
@@ -108,46 +113,64 @@ uint8_t get_snes_reset_state(void) {
   tick_t rising_ticks_tmp = getticks();
 
   static uint8_t resbutton=0, resbutton_prev=0;
-  static uint8_t pushes=0, reset_short_flag=0;
+  static uint8_t pushes=0, reset_flag=0;
 
-  uint8_t release_flag = 0;
+  uint8_t first_detection=0;
 
   uint8_t result=SNES_RESET_NONE;
 
-  /* reset had been pushed; now check if something else is holding
-     the SNES in reset */
-  if(reset_short_flag) {
+  /* first check: Had the reset been pushed?
+     If yes: - check for igr's double reset time and ...
+             - release  */
+  if(reset_flag) {
+    /* 230ms are gone (time for igr's double reset)
+       if time is exceeded, set pushes and reset_flag to zero  */
+    if(rising_ticks_tmp > rising_ticks + 22) {
+      pushes = 0;
+      reset_flag = 0;
+    }
+
+    /* release reset from the sd2snes-side */
     snes_reset(0);
-    delay_ms(SNES_RESET_PULSELEN_MS);
-  }
-  resbutton = get_snes_reset();
+    delay_us(SNES_RELEASE_RESET_DELAY_US);
 
-  if(rising_ticks_tmp > rising_ticks + 22) {/* reset push counter after 230ms (time for igr's double reset) */
-    pushes = 0;
-    reset_short_flag = 0;
   }
 
-  if(resbutton && !resbutton_prev) { /* push, reset tick-timer */
-    pushes++;
-    rising_ticks = getticks();
-  } else if(!resbutton && resbutton_prev) { /* button released */
+  /* now start new cycle */
+  resbutton = get_snes_reset(); /* SNES in reset? */
+
+  if(resbutton) { /* Yes (e.g. reset-button is pressed) */
+
     result = SNES_RESET_SHORT;
-    reset_short_flag = 1;
-    release_flag = 1;
+    reset_flag = 1;
+
+    if(!resbutton_prev) { /* push, reset tick-timer */
+      pushes++;
+      rising_ticks = getticks();
+      if(pushes == 1) {
+        first_detection = 1;
+      }
+      if(pushes == 2) { /* second push within 230ms -> initiate long reset */
+        result = SNES_RESET_LONG;
+      }
+    }
+
+    if(rising_ticks_tmp > rising_ticks + 99) { /* a (normal) long reset is detected */
+      result = SNES_RESET_LONG;
+    }
+
+   /* no need to have the reset_flag set anymore
+      also reset the number of pushes */
+    if(result == SNES_RESET_LONG){
+      pushes = 0;
+      reset_flag = 0;
+    }
   }
 
-  if(pushes == 2) {/* we had a second push  -> initiate long reset */
-    result = SNES_RESET_LONG;
-    reset_short_flag = 0;
-  }
-
-  if(resbutton && rising_ticks_tmp > rising_ticks + 99) /* a (normal) long reset detected */
-    result = SNES_RESET_LONG;
-
-  if(reset_short_flag) {
+  if(reset_flag) {
     snes_reset(1);
-    if(release_flag)
-      delay_ms(170);
+    if(first_detection)
+      delay_ms(190);
     else
       delay_ms(SNES_RESET_PULSELEN_MS);
   }
@@ -163,46 +186,46 @@ uint8_t get_snes_reset_state(void) {
 uint32_t diffcount = 0, samecount = 0, didnotsave = 0, save_failed = 0, last_save_failed = 0;
 uint8_t sram_valid = 0;
 uint8_t snes_main_loop() {
-  if(!romprops.ramsize_bytes)return snes_get_mcu_cmd();
-  saveram_crc = calc_sram_crc(SRAM_SAVE_ADDR, romprops.ramsize_bytes);
-  sram_valid = sram_reliable();
-  if(crc_valid && sram_valid) {
-    if(save_failed) didnotsave++;
-    if(saveram_crc != saveram_crc_old) {
-      if(samecount) {
-        diffcount=1;
-      } else {
-        diffcount++;
-        didnotsave++;
+  if(romprops.ramsize_bytes) {
+    saveram_crc = calc_sram_crc(SRAM_SAVE_ADDR, romprops.ramsize_bytes);
+    sram_valid = sram_reliable();
+    if(crc_valid && sram_valid) {
+      if(save_failed) didnotsave++;
+      if(saveram_crc != saveram_crc_old) {
+        if(samecount) {
+          diffcount=1;
+        } else {
+          diffcount++;
+          didnotsave++;
+        }
+        samecount=0;
       }
-      samecount=0;
+      if(saveram_crc == saveram_crc_old) {
+        samecount++;
+      }
+      if(diffcount>=1 && samecount==5) {
+        printf("SaveRAM CRC: 0x%04lx; saving %s\n", saveram_crc, file_lfn);
+        writeled(1);
+        save_srm(file_lfn, romprops.ramsize_bytes, SRAM_SAVE_ADDR);
+        last_save_failed = save_failed;
+        save_failed = file_res ? 1 : 0;
+        didnotsave = save_failed ? 25 : 0;
+        writeled(0);
+      }
+      if(didnotsave>50) {
+        printf("periodic save (sram contents keep changing or previous save failed)\n");
+        diffcount=0;
+        writeled(1);
+        save_srm(file_lfn, romprops.ramsize_bytes, SRAM_SAVE_ADDR);
+        last_save_failed = save_failed;
+        save_failed = file_res ? 1 : 0;
+        didnotsave = save_failed ? 25 : 0;
+        writeled(!last_save_failed);
+      }
+      saveram_crc_old = saveram_crc;
     }
-    if(saveram_crc == saveram_crc_old) {
-      samecount++;
-    }
-    if(diffcount>=1 && samecount==5) {
-      printf("SaveRAM CRC: 0x%04lx; saving %s\n", saveram_crc, file_lfn);
-      writeled(1);
-      save_sram(file_lfn, romprops.ramsize_bytes, SRAM_SAVE_ADDR);
-      last_save_failed = save_failed;
-      save_failed = file_res ? 1 : 0;
-      didnotsave = save_failed ? 25 : 0;
-      writeled(0);
-    }
-    if(didnotsave>50) {
-      printf("periodic save (sram contents keep changing or previous save failed)\n");
-      diffcount=0;
-      writeled(1);
-      save_sram(file_lfn, romprops.ramsize_bytes, SRAM_SAVE_ADDR);
-      last_save_failed = save_failed;
-      save_failed = file_res ? 1 : 0;
-      didnotsave = save_failed ? 25 : 0;
-      writeled(!last_save_failed);
-    }
-    saveram_crc_old = saveram_crc;
+    printf("crc=%lx crc_valid=%d sram_valid=%d diffcount=%ld samecount=%ld, didnotsave=%ld\n", saveram_crc, crc_valid, sram_valid, diffcount, samecount, didnotsave);
   }
-  printf("crc=%lx crc_valid=%d sram_valid=%d diffcount=%ld samecount=%ld, didnotsave=%ld\n", saveram_crc, crc_valid, sram_valid, diffcount, samecount, didnotsave);
-
   return snes_get_mcu_cmd();
 }
 
@@ -230,6 +253,7 @@ uint8_t menu_main_loop() {
 void get_selected_name(uint8_t* fn) {
   uint32_t cwdaddr;
   uint32_t fdaddr;
+  char *dot;
   cwdaddr = snes_get_mcu_param();
   fdaddr = snescmd_readlong(0x08);
   printf("cwd addr=%lx  fdaddr=%lx\n", cwdaddr, fdaddr);
@@ -239,6 +263,10 @@ void get_selected_name(uint8_t* fn) {
     count++;
   }
   sram_readstrn(fn+count, fdaddr+6+SRAM_MENU_ADDR, 256-count);
+  /* restore hidden file extension */
+  if((dot=strchr((char*)fn, 1))) {
+    *dot = '.';
+  }
 }
 
 void snes_bootprint(void* msg) {
@@ -249,10 +277,11 @@ void snes_bootprint(void* msg) {
     set_saveram_mask(0x1fff);
     set_rom_mask(0x3fffff);
     set_mapper(0x7);
-    snes_reset(0);
+    snes_reset_pulse();
     snes_boot_configured = 1;
-    sleep_ms(20);
+    sleep_ms(200);
   }
+  printf("snes_bootprint: \"%s\"\n", (char*)msg);
   sram_writeblock(msg, SRAM_CMD_ADDR, 33);
 }
 
@@ -348,23 +377,17 @@ uint64_t snescmd_gettime(void) {
   fpga_set_snescmd_addr(SNESCMD_MCU_PARAM);
   uint8_t data[12];
   for(int i=0; i<12; i++) {
-    data[i] = fpga_read_snescmd();
+    data[11-i] = fpga_read_snescmd();
   }
   return srtctime2bcdtime(data);
 }
 
 void snescmd_prepare_nmihook() {
   uint16_t bram_src = sram_readshort(SRAM_MENU_ADDR + MENU_ADDR_BRAM_SRC);
-  uint8_t bram[512];
-  sram_readblock(bram, SRAM_MENU_ADDR + bram_src, 512);
-  snescmd_writeblock(bram, SNESCMD_HOOKS, 40);
-  snescmd_writeblock(bram+40, 0x4, 224);
-  snescmd_writeshort(SNES_BUTTON_LRET, SNESCMD_NMI_RESET);
-  snescmd_writeshort(SNES_BUTTON_LREX, SNESCMD_NMI_RESET_TO_MENU);
-  snescmd_writeshort(SNES_BUTTON_LRSA, SNESCMD_NMI_ENABLE_CHEATS);
-  snescmd_writeshort(SNES_BUTTON_LRSB, SNESCMD_NMI_DISABLE_CHEATS);
-  snescmd_writeshort(SNES_BUTTON_LRSY, SNESCMD_NMI_KILL_NMIHOOK);
-  snescmd_writeshort(SNES_BUTTON_LRSX, SNESCMD_NMI_TMP_KILL_NMIHOOK);
+  uint8_t bram[224];
+  sram_readblock(bram, SRAM_MENU_ADDR + bram_src, 224);
+//  snescmd_writeblock(bram, SNESCMD_HOOKS, 40);
+  snescmd_writeblock(bram, 0x4, 224);
 }
 
 void status_load_to_menu() {

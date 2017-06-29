@@ -5,6 +5,7 @@
 
 #define CFG_FILE ("/sd2snes/config.yml")
 #define LAST_FILE ((const uint8_t*)"/sd2snes/lastgame.cfg")
+#define LAST_FILE_BAK ((const uint8_t*)"/sd2snes/~lastgame.cfg")
 
 #define CFG_VIDMODE_MENU          ("VideoModeMenu")
 #define CFG_VIDMODE_GAME          ("VideoModeGame")
@@ -22,6 +23,7 @@
 #define CFG_CX4_SPEED             ("Cx4Speed")
 #define CFG_SKIN_NAME             ("SkinName")
 #define CFG_CONTROL_TYPE          ("ControlType")
+#define CFG_MSU_VOLUME_BOOST      ("MSUVolumeBoost")
 
 typedef enum {
   VIDMODE_60 = 0,
@@ -46,16 +48,19 @@ typedef struct __attribute__ ((__packed__)) _cfg_block {
   uint8_t cx4_speed;            /* Cx4 speed (0: original, 1: no waitstates */
   uint8_t skin_name[128];       /* file name of selected skin */
   uint8_t control_type;         /* control type (0: A=OK, B=Cancel; 1: A=Cancel, B=OK) */
+  uint8_t msu_volume_boost;     /* volume boost (0: none; 1=+3.5dB; 2=+6dB; 3=+9dB; 4=+12dB) */
 } cfg_t;
 
 int cfg_save(void);
 int cfg_load(void);
 
+int cfg_validity_check_recent_games(void);
 int cfg_add_last_game(uint8_t *fn);
 int cfg_get_last_game(uint8_t *fn, uint8_t index);
 void cfg_dump_recent_games_for_snes(uint32_t address);
 
 void cfg_load_to_menu(void);
+void cfg_get_from_menu(void);
 
 void cfg_set_vidmode_menu(cfg_vidmode_t vidmode);
 cfg_vidmode_t cfg_get_vidmode_menu(void);

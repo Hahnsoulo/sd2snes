@@ -1,16 +1,12 @@
 #include "memmap.i65"
 #include "dma.i65"
-.word nmi_payload
+.word nmihook
 GAME_MAIN:
   sep #$20 : .as
   stz $4200     ; inhibit VBlank NMI
   lda #$01
   sta $420d
   rep #$20 : .al
-  lda #$7548
-  sta @BRAM_UNLOCK
-  lda #$7a72
-  sta @BRAM_UNLOCK+2
   lda #$0000
   sta @MCU_CMD  ; clear MCU command register
   rep #$20 : .al
@@ -81,28 +77,15 @@ coldboot:       ; Regular, cold-start init
   jsr screen_on
   jsr wait_mcu_ready
   jsr filesel_init
-
   sep #$20 : .as
   lda @ST_RTC_VALID
   beq +
-  jsl time_init
+  jsl rtc_init
 +
   jsr fileselloop
   sei
   stz $4200
   jmp @infloop  ; infinite loop in WRAM
-
-waitblank:
-  php
-  sep #$30 : .as : .xs
-- lda $4212
-  and #$80
-  bne -
-- lda $4212
-  and #$80
-  beq -
-  plp
-  rts
 
 colortest:
   sep #$20 : .as
@@ -441,6 +424,7 @@ clear_vram:
 
 .byt "fadeloop"
 ; *=$002a10
+; via $7ef100
 ; acknowledge ready for ROM load
 ; wait for ACK
 ; fade screen
@@ -490,10 +474,17 @@ fadeloop_start
   sta $420b
 ; fill bank $7f
   sta $420b
-; fix for anti-copier routines that rely on pre-initialized DMA target
-; lda #$ff
-; sta $4301
+; reset PPU2 H/V odd/even read flag
+; (fix for uninitialized $213c/$213d reads)
+  lda $213f
+; fix for uninitialized DMA transfers
   rep #$20 : .al
+  lda #$ffff
+  ldy #$007c
+- dey
+  dey
+  sta $4300, y
+  bne -
   lda #$fe80 ; - bra -
   sta @$7fffe0
   lda #CMD_RESET
@@ -518,13 +509,17 @@ store_wram_routines:
   ldx #!store_blockram_routine_src
   ldy #!WRAM_STORE_BLOCKRAM_ROUTINE
   mvn $7e, $c0
-  lda #$007f
+  lda #$00ee
   ldx #!fadeloop
   ldy #!WRAM_FADELOOP
   mvn $7e, $c0
   lda #$000a
   ldx #!wram_wait_mcu_src
   ldy #!WRAM_WAIT_MCU
+  mvn $7e, $c0
+  lda #$007f
+  ldx #!wram_load_ultra16_cfg_src
+  ldy #!WRAM_LOAD_ULTRA16_CFG
   mvn $7e, $c0
   plb
   plp
@@ -540,7 +535,7 @@ store_blockram_routine_src:
   lda #$fe
   sta infloop+1
   rep #$20 : .al
-  lda #$007f
+  lda #$00ee
   ldx #!WRAM_FADELOOP
   ldy #!BRAM_ROUTINE
   phb
@@ -568,12 +563,27 @@ wram_routine_src:
   plp
   rtl
 
-; *=$7ef180
+; *=$7ef200
 wram_wait_mcu_src:
   .as
 - lda @SNES_CMD
   cmp #$55
   bne -
+  rtl
+
+; *=$7ef210
+wram_load_ultra16_cfg_src:
+  .as
+  lda @$0021c1
+  and #$fe
+  sta @$0021c1
+  lda @$c70000
+  pha
+  lda @$0021c1
+  ora #$01
+  sta @$0021c1
+  pla
+  sta @ST_U16_CFG
   rtl
 
 game_handshake:
@@ -614,7 +624,7 @@ game_handshake_error:
 wait_mcu_ready:
   php
   sep #$20 : .as
-  lda #$ff
+  lda #$00
   sta @MCU_CMD
 - lda @SNES_CMD
   cmp #$55
@@ -678,98 +688,12 @@ detect_ultra16:
 detect_ultra16_found:
   lda @$0021c2
   sta @ST_IS_U16
+  jsl @WRAM_LOAD_ULTRA16_CFG
+  lda @$0021c1
+  and #$fb
+  sta @$0021c1
 detect_ultra16_out:
   lda #$55
   sta @$0021c0
   plp
-  rts
-
-killdma:
-  stz $420b
-  stz $420c
-
-  stz $4300
-  stz $4301
-  stz $4302
-  stz $4303
-  stz $4304
-  stz $4305
-  stz $4306
-  stz $4307
-  stz $4308
-  stz $4309
-  stz $430a
-  stz $430b
-  stz $4310
-  stz $4311
-  stz $4312
-  stz $4313
-  stz $4314
-  stz $4315
-  stz $4316
-  stz $4317
-  stz $4318
-  stz $4319
-  stz $431a
-  stz $431b
-  stz $4320
-  stz $4321
-  stz $4322
-  stz $4323
-  stz $4324
-  stz $4325
-  stz $4326
-  stz $4327
-  stz $4328
-  stz $4329
-  stz $432a
-  stz $432b
-  stz $4330
-  stz $4331
-  stz $4332
-  stz $4333
-  stz $4334
-  stz $4335
-  stz $4336
-  stz $4337
-  stz $4338
-  stz $4339
-  stz $433a
-  stz $433b
-  stz $4340
-  stz $4341
-  stz $4342
-  stz $4343
-  stz $4344
-  stz $4345
-  stz $4346
-  stz $4347
-  stz $4348
-  stz $4349
-  stz $434a
-  stz $434b
-  stz $4350
-  stz $4351
-  stz $4352
-  stz $4353
-  stz $4354
-  stz $4355
-  stz $4356
-  stz $4357
-  stz $4358
-  stz $4359
-  stz $435a
-  stz $435b
-  stz $4370
-  stz $4371
-  stz $4372
-  stz $4373
-  stz $4374
-  stz $4375
-  stz $4376
-  stz $4377
-  stz $4378
-  stz $4379
-  stz $437a
-  stz $437b
   rts

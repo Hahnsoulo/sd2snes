@@ -1,6 +1,6 @@
 #include "memmap.i65"
 
- APU RAM init routine
+; APU RAM init routine
 apu_ram_init:
   php
   sep #$20 : .as
@@ -12,7 +12,7 @@ apu_ram_init:
   lda @apu_ram_init_code, x
   jsr spc_upload_byte
   inx
-  cpx #20
+  cpx #35
   bne -
   ldx #$0002
   stx APUIO2
@@ -26,10 +26,13 @@ apu_ram_init:
   plp
   rts
 
+; All SPC700 routines in SPC700 machine code below this line
+
 apu_ram_init_code:  ; .org $0002
+  ; part1: fill $0100-$03ff with #$aa
   .byt $e8,$aa      ; mov a, #$aa
   .byt $8d,$00      ; mov y, #$00
-  .byt $cd,$fe      ; mov x, #$fe
+  .byt $cd,$03      ; mov x, #$03
   ; loop:
   .byt $d6,$00,$01  ; mov !$0100+y, a
   .byt $fc          ; inc y
@@ -37,15 +40,23 @@ apu_ram_init_code:  ; .org $0002
   .byt $ab,$0a      ; inc loop+2
   .byt $1d          ; dec x
   .byt $d0,-11      ; bne loop
+  ; part2: zero $0400-$ffff
+  .byt $e8,$00      ; mov a, #$00
+  .byt $cd,$fc      ; mov x, #$fc
+  ; loop2:
+  .byt $d6,$00,$04  ; mov !$0400+y, a
+  .byt $fc          ; inc y
+  .byt $d0,-6       ; bne loop2
+  .byt $ab,$19      ; inc loop2+2
+  .byt $1d          ; dec x
+  .byt $d0,-11      ; bne loop2
   ; Re-run IPL
   .byt $5f,$c0,$ff  ; jmp $ffc0
 
-
 ; SPC player code
-; All SPC700 routines in SPC700 machine code
 ; SPC loader & transfer routines by Shay Green <gblargg@gmail.com>
 
-loader              ; .org $0002
+spc_loader:         ; .org $0002
   .byt $f8,$21      ;  mov x,@loader_data
   .byt $bd          ;  mov sp,x
   .byt $cd,$22      ;  mov x,#@loader_data+1
@@ -77,7 +88,7 @@ loader              ; .org $0002
 
 ;---------------------------------------
 
-transfer            ; .org $0002
+spc_transfer:       ; .org $0002
 
   .byt $cd,$fe      ; mov x,#$fe    ; transfer 254 pages
 
@@ -92,14 +103,15 @@ transfer            ; .org $0002
   .byt $e4,$f7      ;  mov a,$f7  ; tell S-CPU we're ready for more
   .byt $cb,$f7      ;  mov $f7,Y
   .byt $d6,$c0,$02  ; mov3: mov !$02c0+y,a
+  .byt $00          ;  nop ; give some time for S-CPU HDMA / WRAM refresh
   .byt $dc          ;  dec y
-  .byt $10,-25      ;  bpl quad
+  .byt $10,-26      ;  bpl quad
 ; Increment MSBs of addresses
   .byt $ab,$0a      ;  inc mov0+2
   .byt $ab,$0f      ;  inc mov1+2
   .byt $ab,$14      ;  inc mov2+2
   .byt $ab,$1b      ;  inc mov3+2
   .byt $1d          ;  dec x
-  .byt $d0,-38      ;  bne page
+  .byt $d0,-39      ;  bne page
 ; Rerun loader
   .byt $5f,$c0,$ff  ;  jmp $ffc0

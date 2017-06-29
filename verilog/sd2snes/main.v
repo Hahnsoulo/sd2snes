@@ -26,7 +26,7 @@ module main(
   input [23:0] SNES_ADDR_IN,
   input SNES_READ_IN,
   input SNES_WRITE_IN,
-  input SNES_CS,
+  input SNES_ROMSEL_IN,
   inout [7:0] SNES_DATA,
   input SNES_CPU_CLK_IN,
   input SNES_REFRESH,
@@ -35,7 +35,7 @@ module main(
   output SNES_DATABUS_DIR,
   input SNES_SYSCLK,
 
-  input [7:0] SNES_PA,
+  input [7:0] SNES_PA_IN,
   input SNES_PARD_IN,
   input SNES_PAWR_IN,
 
@@ -96,9 +96,11 @@ wire [10:0] SD_DMA_PARTIAL_START;
 wire [10:0] SD_DMA_PARTIAL_END;
 
 wire [10:0] dac_addr;
+wire [2:0] dac_vol_select_out;
+wire [8:0] dac_ptr_addr;
 //wire [7:0] dac_volume;
 wire [7:0] msu_volumerq_out;
-wire [6:0] msu_status_out;
+wire [7:0] msu_status_out;
 wire [31:0] msu_addressrq_out;
 wire [15:0] msu_trackrq_out;
 wire [13:0] msu_write_addr;
@@ -159,7 +161,9 @@ reg [7:0] SNES_PARDr;
 reg [7:0] SNES_READr;
 reg [7:0] SNES_WRITEr;
 reg [7:0] SNES_CPU_CLKr;
-reg [23:0] SNES_ADDRr [5:0];
+reg [7:0] SNES_ROMSELr;
+reg [23:0] SNES_ADDRr [6:0];
+reg [7:0] SNES_PAr [6:0];
 reg [7:0] SNES_DATAr [4:0];
 
 reg SNES_DEADr = 1;
@@ -168,17 +172,19 @@ reg SNES_reset_strobe = 0;
 reg free_strobe = 0;
 
 wire SNES_PARD_start = ((SNES_PARDr[6:1] | SNES_PARDr[7:2]) == 6'b111110);
-wire SNES_RD_start = ((SNES_READr[6:1] | SNES_READr[7:2]) == 6'b111110);
+wire SNES_RD_start = ((SNES_READr[6:1] | SNES_READr[7:2]) == 6'b111100);
 wire SNES_RD_end = ((SNES_READr[6:1] & SNES_READr[7:2]) == 6'b000001);
 wire SNES_WR_end = ((SNES_WRITEr[6:1] & SNES_WRITEr[7:2]) == 6'b000001);
-wire SNES_cycle_start = ((SNES_CPU_CLKr[5:2] & SNES_CPU_CLKr[4:1]) == 4'b0001);
-wire SNES_cycle_end = ((SNES_CPU_CLKr[5:2] | SNES_CPU_CLKr[4:1]) == 4'b1110);
+wire SNES_cycle_start = ((SNES_CPU_CLKr[7:2] & SNES_CPU_CLKr[6:1]) == 6'b000011);
+wire SNES_cycle_end = ((SNES_CPU_CLKr[7:2] | SNES_CPU_CLKr[6:1]) == 6'b111000);
 wire SNES_WRITE = SNES_WRITEr[2] & SNES_WRITEr[1];
 wire SNES_READ = SNES_READr[2] & SNES_READr[1];
 wire SNES_CPU_CLK = SNES_CPU_CLKr[2] & SNES_CPU_CLKr[1];
 wire SNES_PARD = SNES_PARDr[2] & SNES_PARDr[1];
 
-wire [23:0] SNES_ADDR = (SNES_ADDRr[5] & SNES_ADDRr[4]);
+wire SNES_ROMSEL = (SNES_ROMSELr[5] & SNES_ROMSELr[4]);
+wire [23:0] SNES_ADDR = (SNES_ADDRr[6] & SNES_ADDRr[5]);
+wire [7:0] SNES_PA = (SNES_PAr[6] & SNES_PAr[5]);
 wire [7:0] SNES_DATA_IN = (SNES_DATAr[3] & SNES_DATAr[2]);
 
 reg [7:0] BUS_DATA;
@@ -204,12 +210,21 @@ always @(posedge CLK2) begin
   SNES_READr <= {SNES_READr[6:0], SNES_READ_IN};
   SNES_WRITEr <= {SNES_WRITEr[6:0], SNES_WRITE_IN};
   SNES_CPU_CLKr <= {SNES_CPU_CLKr[6:0], SNES_CPU_CLK_IN};
+  SNES_ROMSELr <= {SNES_ROMSELr[6:0], SNES_ROMSEL_IN};
+  SNES_ADDRr[6] <= SNES_ADDRr[5];
   SNES_ADDRr[5] <= SNES_ADDRr[4];
   SNES_ADDRr[4] <= SNES_ADDRr[3];
   SNES_ADDRr[3] <= SNES_ADDRr[2];
   SNES_ADDRr[2] <= SNES_ADDRr[1];
   SNES_ADDRr[1] <= SNES_ADDRr[0];
   SNES_ADDRr[0] <= SNES_ADDR_IN;
+  SNES_PAr[6] <= SNES_PAr[5];
+  SNES_PAr[5] <= SNES_PAr[4];
+  SNES_PAr[4] <= SNES_PAr[3];
+  SNES_PAr[3] <= SNES_PAr[2];
+  SNES_PAr[2] <= SNES_PAr[1];
+  SNES_PAr[1] <= SNES_PAr[0];
+  SNES_PAr[0] <= SNES_PA_IN;
   SNES_DATAr[4] <= SNES_DATAr[3];
   SNES_DATAr[3] <= SNES_DATAr[2];
   SNES_DATAr[2] <= SNES_DATAr[1];
@@ -223,7 +238,7 @@ parameter ST_MCU_RD_END  = 5'b00100;
 parameter ST_MCU_WR_ADDR = 5'b01000;
 parameter ST_MCU_WR_END  = 5'b10000;
 
-parameter SNES_DEAD_TIMEOUT = 17'd86000; // 1ms
+parameter SNES_DEAD_TIMEOUT = 17'd96000; // 1ms
 
 parameter ROM_CYCLE_LEN = 4'd7;
 
@@ -258,8 +273,8 @@ wire SD_DMA_TO_ROM = (SD_DMA_STATUS && (SD_DMA_TGT == 2'b00));
 dac snes_dac(
   .clkin(CLK2),
   .sysclk(SNES_SYSCLK),
-  .mclk(DAC_MCLK),
-  .lrck(DAC_LRCK),
+  .mclk_out(DAC_MCLK),
+  .lrck_out(DAC_LRCK),
   .sdout(DAC_SDOUT),
   .we(SD_DMA_TGT==2'b01 ? SD_DMA_SRAM_WE : 1'b1),
   .pgm_address(dac_addr),
@@ -267,8 +282,11 @@ dac snes_dac(
   .DAC_STATUS(DAC_STATUS),
   .volume(msu_volumerq_out),
   .vol_latch(msu_volume_latch_out),
+  .vol_select(dac_vol_select_out),
+  .palmode(dac_palmode_out),
   .play(dac_play),
-  .reset(dac_reset)
+  .reset(dac_reset),
+  .dac_address_ext(dac_ptr_addr)
 );
 
 srtc snes_srtc (
@@ -396,6 +414,8 @@ wire [31:0] cheat_pgm_data;
 wire [7:0] cheat_data_out;
 wire [2:0] cheat_pgm_idx;
 
+wire feat_cmd_unlock = featurebits[5];
+
 mcu_cmd snes_mcu_cmd(
   .clk(CLK2),
   .snes_sysclk(SNES_SYSCLK),
@@ -428,6 +448,9 @@ mcu_cmd snes_mcu_cmd(
   .DAC_STATUS(DAC_STATUS),
   .dac_play_out(dac_play),
   .dac_reset_out(dac_reset),
+  .dac_vol_select_out(dac_vol_select_out),
+  .dac_palmode_out(dac_palmode_out),
+  .dac_ptr_out(dac_ptr_addr),
   .msu_addr_out(msu_write_addr),
   .MSU_STATUS(msu_status_out),
   .msu_status_reset_out(msu_status_reset_bits),
@@ -482,6 +505,7 @@ address snes_addr(
   .featurebits(featurebits),
   .SNES_ADDR(SNES_ADDR), // requested address from SNES
   .SNES_PA(SNES_PA),
+  .SNES_ROMSEL(SNES_ROMSEL),
   .ROM_ADDR(MAPPED_SNES_ADDR),   // Address to request from SRAM (active low)
   .ROM_HIT(ROM_HIT),     // want to access RAM0
   .IS_SAVERAM(IS_SAVERAM),
@@ -505,16 +529,34 @@ address snes_addr(
   .dspx_dp_enable(dspx_dp_enable),
   .dspx_a0(DSPX_A0),
   .r213f_enable(r213f_enable),
-  .snescmd_enable(snescmd_enable)
+  .snescmd_enable(snescmd_enable),
+  .nmicmd_enable(nmicmd_enable),
+  .return_vector_enable(return_vector_enable),
+  .branch1_enable(branch1_enable),
+  .branch2_enable(branch2_enable)
 );
+
+reg pad_latch = 0;
+reg [4:0] pad_cnt = 0;
+
+reg snes_ajr = 0;
 
 cheat snes_cheat(
   .clk(CLK2),
   .SNES_ADDR(SNES_ADDR),
+  .SNES_PA(SNES_PA),
   .SNES_DATA(SNES_DATA),
   .SNES_reset_strobe(SNES_reset_strobe),
-  .snescmd_wr_strobe(SNES_WR_end & snescmd_enable),
-  .SNES_cycle_start(SNES_RD_start),
+  .SNES_wr_strobe(SNES_WR_end),
+  .SNES_rd_strobe(SNES_RD_start),
+  .snescmd_enable(snescmd_enable),
+  .nmicmd_enable(nmicmd_enable),
+  .return_vector_enable(return_vector_enable),
+  .branch1_enable(branch1_enable),
+  .branch2_enable(branch2_enable),
+  .pad_latch(pad_latch),
+  .snes_ajr(snes_ajr),
+  .SNES_cycle_start(SNES_cycle_start),
   .pgm_idx(cheat_pgm_idx),
   .pgm_we(cheat_pgm_we),
   .pgm_in(cheat_pgm_data),
@@ -534,6 +576,28 @@ initial r213f_forceread = 0;
 initial r213f_state = 2'b01;
 initial r213f_delay = 3'b000;
 
+wire snoop_4200_enable = {SNES_ADDR[22], SNES_ADDR[15:0]} == 17'h04200;
+wire r4016_enable = {SNES_ADDR[22], SNES_ADDR[15:0]} == 17'h04016;
+
+always @(posedge CLK2) begin
+  if(SNES_WR_end & snoop_4200_enable) begin
+    snes_ajr <= SNES_DATA[0];
+  end
+end
+
+always @(posedge CLK2) begin
+  if(SNES_WR_end & r4016_enable) begin
+    pad_latch <= 1'b1;
+    pad_cnt <= 5'h0;
+  end
+  if(SNES_RD_start & r4016_enable) begin
+    pad_cnt <= pad_cnt + 1;
+    if(&pad_cnt[3:0]) begin
+      pad_latch <= 1'b0;
+    end
+  end
+end
+
 assign SNES_DATA = (r213f_enable & ~SNES_PARD & ~r213f_forceread) ? r213fr
                    :(~SNES_READ ^ (r213f_forceread & r213f_enable & ~SNES_PARD))
                                 ? (srtc_enable ? SRTC_SNES_DATA_OUT
@@ -541,8 +605,8 @@ assign SNES_DATA = (r213f_enable & ~SNES_PARD & ~r213f_forceread) ? r213fr
                                   :dspx_dp_enable ? DSPX_SNES_DATA_OUT
                                   :msu_enable ? MSU_SNES_DATA_OUT
                                   :bsx_data_ovr ? BSX_SNES_DATA_OUT
-                                  :(snescmd_unlock & snescmd_enable) ? snescmd_dout
-                                  :cheat_hit ? cheat_data_out
+                                  :(cheat_hit & ~feat_cmd_unlock) ? cheat_data_out
+                                  :((snescmd_unlock | feat_cmd_unlock) & snescmd_enable) ? snescmd_dout
                                   :(ROM_ADDR0 ? ROM_DATA[7:0] : ROM_DATA[15:8])
                                   ) : 8'bZ;
 
@@ -632,15 +696,15 @@ end
 always @(posedge CLK2) begin
   if(SNES_cycle_end) r213f_forceread <= 1'b1;
   else if(SNES_PARD_start & r213f_enable) begin
-    r213f_delay <= 3'b000;
-    r213f_state <= 2'b10;
-  end else if(r213f_state == 2'b10) begin
-    r213f_delay <= r213f_delay - 1;
-    if(r213f_delay == 3'b000) begin
+//    r213f_delay <= 3'b000;
+//    r213f_state <= 2'b10;
+//  end else if(r213f_state == 2'b10) begin
+//    r213f_delay <= r213f_delay - 1;
+//    if(r213f_delay == 3'b000) begin
       r213f_forceread <= 1'b0;
       r213f_state <= 2'b01;
       r213fr <= {SNES_DATA[7:5], mcu_region, SNES_DATA[3:0]};
-    end
+//    end
   end
 end
 
@@ -675,23 +739,21 @@ assign ROM_CE = 1'b0;
 assign ROM_BHE = ROM_ADDR0;
 assign ROM_BLE = !ROM_ADDR0;
 
-wire snoop_4200_enable = {SNES_ADDR[22], SNES_ADDR[15:0]} == 17'h04200;
-
 assign SNES_DATABUS_OE = (dspx_enable | dspx_dp_enable) ? 1'b0 :
                          msu_enable ? 1'b0 :
                          bsx_data_ovr ? (SNES_READ & SNES_WRITE) :
                          srtc_enable ? (SNES_READ & SNES_WRITE) :
-                         snescmd_enable ? ((~snescmd_unlock | SNES_READ) & SNES_WRITE) :
+                         snescmd_enable ? (~(snescmd_unlock | feat_cmd_unlock) | (SNES_READ & SNES_WRITE)) :
                          bs_page_enable ? (SNES_READ) :
                          r213f_enable & !SNES_PARD ? 1'b0 :
                          snoop_4200_enable ? SNES_WRITE :
-                         ((IS_ROM & SNES_CS)
+                         ((IS_ROM & SNES_ROMSEL)
                           |(!IS_ROM & !IS_SAVERAM & !IS_WRITABLE & !IS_FLASHWR)
                           |(SNES_READ & SNES_WRITE)
                           | bsx_tristate
                          );
 
-assign SNES_DATABUS_DIR = (!SNES_READ | (!SNES_PARD & (r213f_enable)))
+assign SNES_DATABUS_DIR = (~SNES_READ | (~SNES_PARD & (r213f_enable)))
                            ? 1'b1 ^ (r213f_forceread & r213f_enable & ~SNES_PARD)
                            : 1'b0;
 
@@ -699,12 +761,10 @@ assign SNES_IRQ = 1'b0;
 
 assign p113_out = 1'b0;
 
-wire [8:0] snescmd_addra = snoop_4200_enable ? 9'h1fa : SNES_ADDR[8:0];
-
 snescmd_buf snescmd (
   .clka(CLK2), // input clka
-  .wea(SNES_WR_end & ((snescmd_unlock & snescmd_enable) | snoop_4200_enable)), // input [0 : 0] wea
-  .addra(snescmd_addra), // input [8 : 0] addra
+  .wea(SNES_WR_end & ((snescmd_unlock | feat_cmd_unlock) & snescmd_enable)), // input [0 : 0] wea
+  .addra(SNES_ADDR[8:0]), // input [8 : 0] addra
   .dina(SNES_DATA), // input [7 : 0] dina
   .douta(snescmd_dout), // output [7 : 0] douta
   .clkb(CLK2), // input clkb

@@ -72,7 +72,7 @@
 
         E1        -             pause DAC
         E2        -             resume/play DAC
-        E3        -             reset DAC playback pointer (0)
+        E3        hhll          set DAC playback pointer
         E4        hhll          set MSU read pointer
 
         E5        tt{7}         set RTC (SPC7110 format + 1000s of year,
@@ -83,8 +83,13 @@
         E8        -             reset DSP program and data ROM write pointers
         E9        hhmmllxxxx    write+incr. DSP program ROM (xxxx=dummy writes)
         EA        hhllxxxx      write+incr. DSP data ROM (xxxx=dummy writes)
-        EB        -             put DSP into reset
-        EC        -             release DSP from reset
+        EB        rr            control DSP reset
+        EC        vv            set DAC volume boost
+                                  vv[2:0]: 0 = 1x
+                                           1 = 1.5x
+                                           2 = 2x
+                                           3 = 3x
+                                           4 = 4x
         ED        -             set feature enable bits (see below)
         EE        -             set $213f override value (0=NTSC, 1=PAL)
         EF        aaaa          set DSP core features (see below)
@@ -114,7 +119,7 @@
           6        reserved (0)
           5        MSU1 Audio request from SNES
           4        MSU1 Data request from SNES
-          3        reserved (0)
+          3        MSU1 Audio control status: 0=no resume, 1=resume
           2        MSU1 Audio control status: 0=no repeat, 1=repeat
           1        MSU1 Audio control status: 0=pause, 1=play
           0        MSU1 Audio control request
@@ -124,7 +129,7 @@
    ==========================================================================
          7         -
          6         -
-         5         -
+         5         enable permanent snescmd unlock (during load handshake)
          4         enable $213F override
          3         enable MSU1 registers
          2         enable SRTC registers
@@ -230,6 +235,7 @@ uint16_t fpga_status() {
 }
 
 void fpga_set_sddma_range(uint16_t start, uint16_t end) {
+  DBG_SD_OFFLOAD printf("FPGA set partial range %u - %u\n", start, end);
   FPGA_SELECT();
   FPGA_TX_BYTE(FPGA_CMD_SDDMA_RANGE);
   FPGA_TX_BYTE(start>>8);
@@ -247,13 +253,13 @@ void fpga_sddma(uint8_t tgt, uint8_t partial) {
   FPGA_DESELECT();
   FPGA_SELECT();
   FPGA_TX_BYTE(FPGA_CMD_GETSTATUS);
-  DBG_SD printf("FPGA DMA request sent, wait for completion...");
+  DBG_SD_OFFLOAD printf("FPGA DMA tgt=%u partial=%u, wait for completion...", tgt, partial);
   while(FPGA_RX_BYTE() & 0x80) {
     FPGA_RX_BYTE(); /* eat the 2nd status byte */
   }
-  DBG_SD printf("...complete\n");
-  FPGA_DESELECT();
   BITBAND(SD_CLKREG->FIODIR, SD_CLKPIN) = 1;
+  DBG_SD_OFFLOAD printf("...complete\n");
+  FPGA_DESELECT();
 }
 
 void dac_play() {
@@ -270,11 +276,11 @@ void dac_pause() {
   FPGA_DESELECT();
 }
 
-void dac_reset() {
+void dac_reset(uint16_t address) {
   FPGA_SELECT();
-  FPGA_TX_BYTE(FPGA_CMD_DACRESETPTR);
-  FPGA_TX_BYTE(0x00); /* latch reset */
-  FPGA_TX_BYTE(0x00); /* latch reset */
+  FPGA_TX_BYTE(FPGA_CMD_DACSETPTR);
+  FPGA_TX_BYTE((address>>8) & 0xff); /* address hi */
+  FPGA_TX_BYTE(address & 0xff);      /* address lo */
   FPGA_DESELECT();
 }
 
@@ -283,16 +289,14 @@ void msu_reset(uint16_t address) {
   FPGA_TX_BYTE(FPGA_CMD_MSUSETPTR);
   FPGA_TX_BYTE((address>>8) & 0xff); /* address hi */
   FPGA_TX_BYTE(address & 0xff);      /* address lo */
-  FPGA_TX_BYTE(0x00);                /* latch reset */
-  FPGA_TX_BYTE(0x00);                /* latch reset */
   FPGA_DESELECT();
 }
 
-void set_msu_status(uint8_t set, uint8_t reset) {
+void set_msu_status(uint16_t status) {
   FPGA_SELECT();
   FPGA_TX_BYTE(FPGA_CMD_MSUSETBITS);
-  FPGA_TX_BYTE(set);
-  FPGA_TX_BYTE(reset);
+  FPGA_TX_BYTE(status & 0xff);
+  FPGA_TX_BYTE((status >> 8) & 0xff);
   FPGA_TX_BYTE(0x00); /* latch reset */
   FPGA_DESELECT();
 }
@@ -391,8 +395,15 @@ void fpga_write_dspx_dat(uint16_t data) {
 
 void fpga_dspx_reset(uint8_t reset) {
   FPGA_SELECT();
-  FPGA_TX_BYTE(reset ? FPGA_CMD_DSPRESET : FPGA_CMD_DSPUNRESET);
-  FPGA_TX_BYTE(0x00);
+  FPGA_TX_BYTE(FPGA_CMD_DSPRESET);
+  FPGA_TX_BYTE(reset);
+  FPGA_DESELECT();
+}
+
+void fpga_set_dac_boost(uint8_t boost) {
+  FPGA_SELECT();
+  FPGA_TX_BYTE(FPGA_CMD_DACBOOST);
+  FPGA_TX_BYTE(boost);
   FPGA_DESELECT();
 }
 

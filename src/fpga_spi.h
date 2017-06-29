@@ -47,6 +47,7 @@
 #define FPGA_TX_BLOCK(x,y) spi_tx_block(x,y)
 #define FPGA_RX_BLOCK(x,y) spi_rx_block(x,y)
 
+#define FEAT_CMD_UNLOCK    (1 << 5)
 #define FEAT_213F          (1 << 4)
 #define FEAT_MSU1          (1 << 3)
 #define FEAT_SRTC          (1 << 2)
@@ -78,7 +79,7 @@
 #define FPGA_CMD_MSUSETBITS      (0xe0)
 #define FPGA_CMD_DACPAUSE        (0xe1)
 #define FPGA_CMD_DACPLAY         (0xe2)
-#define FPGA_CMD_DACRESETPTR     (0xe3)
+#define FPGA_CMD_DACSETPTR       (0xe3)
 #define FPGA_CMD_MSUSETPTR       (0xe4)
 #define FPGA_CMD_RTCSET          (0xe5)
 #define FPGA_CMD_BSXSETBITS      (0xe6)
@@ -87,7 +88,7 @@
 #define FPGA_CMD_DSPWRITEPGM     (0xe9)
 #define FPGA_CMD_DSPWRITEDAT     (0xea)
 #define FPGA_CMD_DSPRESET        (0xeb)
-#define FPGA_CMD_DSPUNRESET      (0xec)
+#define FPGA_CMD_DACBOOST        (0xec)
 #define FPGA_CMD_SETFEATURE      (0xed)
 #define FPGA_CMD_SET213F         (0xee)
 #define FPGA_CMD_DSPFEAT         (0xef)
@@ -101,17 +102,14 @@
 void fpga_spi_init(void);
 uint8_t fpga_test(void);
 uint16_t fpga_status(void);
-void spi_fpga(void);
-void spi_sd(void);
-void spi_none(void);
 void set_mcu_addr(uint32_t);
 void set_dac_addr(uint16_t);
 void dac_play(void);
 void dac_pause(void);
-void dac_reset(void);
+void dac_reset(uint16_t);
 void msu_reset(uint16_t);
 void set_msu_addr(uint16_t);
-void set_msu_status(uint8_t set, uint8_t reset);
+void set_msu_status(uint16_t status);
 void set_saveram_mask(uint32_t);
 void set_rom_mask(uint32_t);
 void set_mapper(uint8_t val);
@@ -127,6 +125,7 @@ void fpga_reset_dspx_addr(void);
 void fpga_write_dspx_pgm(uint32_t data);
 void fpga_write_dspx_dat(uint16_t data);
 void fpga_dspx_reset(uint8_t reset);
+void fpga_set_dac_boost(uint8_t boost);
 void fpga_set_features(uint8_t feat);
 void fpga_set_213f(uint8_t data);
 void fpga_set_snescmd_addr(uint16_t addr);

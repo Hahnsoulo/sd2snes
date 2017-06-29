@@ -193,7 +193,7 @@ void smc_id(snes_romprops_t* props) {
     case 0x21: /* HiROM */
       props->mapper_id = 0;
       /* DSP1B HiROM */
-      if(header->map == 0x31 && (header->carttype == 0x03 || header->carttype == 0x05)) {
+      if((header->map & 0xef) == 0x21 && (header->carttype == 0x03 || header->carttype == 0x05)) {
         props->has_dspx = 1;
         props->dsp_fw = DSPFW_1B;
         props->fpga_features |= FEAT_DSPX;
@@ -310,8 +310,12 @@ uint8_t smc_headerscore(uint32_t addr, snes_header_t* header) {
     return 0;
   }
   uint8_t mapper = header->map & ~0x10;
+  uint8_t bsxmapper = header->ramsize & ~0x10;
+
   uint16_t resetvector = header->vect_reset; /* not endian safe! */
   uint32_t file_addr = (((addr - header_offset) & ~0x7fff) | (resetvector & 0x7fff)) + header_offset;
+  uint8_t bsx_bytecode_adjust = 0;
+
   if(resetvector < 0x8000) return 0;
 
   score += 2*isFixed(&header->licensee, sizeof(header->licensee), 0x33);
@@ -320,9 +324,17 @@ uint8_t smc_headerscore(uint32_t addr, snes_header_t* header) {
   if(header->romsize < 0x10) score++;
   if(header->ramsize < 0x08) score++;
   if(header->destcode < 0x0e) score++;
+  /* BS-X ROM type / run flags */
+  if(!(header->destcode & 0x40) && !(header->destcode & 0xf)) score++;
+  /* BS-X bytecode instead of 65c816 binary - vectors will be invalid */
+  if(header->gamecode[0] == 0x00 && header->gamecode[1] == 0x01
+     && header->gamecode[2] == 0x00 && header->gamecode[3] == 0x00) {
+    score++;
+    bsx_bytecode_adjust = 2;
+  }
 
-  if((addr-header_offset) == 0x007fb0 && mapper == 0x20) score += 2;
-  if((addr-header_offset) == 0x00ffb0 && mapper == 0x21) score += 2;
+  if((addr-header_offset) == 0x007fb0 && (mapper == 0x20 || bsxmapper == 0x20)) score += 2;
+  if((addr-header_offset) == 0x00ffb0 && (mapper == 0x21 || bsxmapper == 0x21)) score += 2;
   if((addr-header_offset) == 0x007fb0 && mapper == 0x22) score += 2;
   if((addr-header_offset) == 0x40ffb0 && mapper == 0x25) score += 2;
 
@@ -357,7 +369,7 @@ uint8_t smc_headerscore(uint32_t addr, snes_header_t* header) {
     case 0xcd: /* cmp abs */
     case 0xec: /* cpx abs */
     case 0xcc: /* cpy abs */
-      score -= 4;
+      score -= (4 - bsx_bytecode_adjust);
       break;
 
     case 0x00: /* brk */
@@ -365,7 +377,7 @@ uint8_t smc_headerscore(uint32_t addr, snes_header_t* header) {
     case 0xdb: /* stp */
     case 0x42: /* wdm */
     case 0xff: /* sbc abs long indexed */
-      score -= 8;
+      score -= (8 - bsx_bytecode_adjust);
       break;
   }
 
